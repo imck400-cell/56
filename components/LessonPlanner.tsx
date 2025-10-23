@@ -204,23 +204,28 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
             setLessonPlan(prev => {
                 const mergedPlan = { ...prev };
 
-                // Iterate over the keys from the AI result and merge non-empty values.
-                // This prevents overwriting user-entered data with empty strings or arrays from the AI.
+                const isValueEmpty = (value: any): boolean =>
+                    value === null ||
+                    value === undefined ||
+                    (typeof value === 'string' && value.trim() === '') ||
+                    (Array.isArray(value) && value.length === 0);
+
                 (Object.keys(partialPlan) as Array<keyof Partial<LessonPlan>>).forEach(key => {
-                    const value = partialPlan[key];
-                    const isEmpty = value === null || value === undefined || (typeof value === 'string' && value.trim() === '') || (Array.isArray(value) && value.length === 0);
+                    // Skip 'day' as it is derived from 'date' and handled separately
+                    if (key === 'day') return;
+
+                    const aiValue = partialPlan[key];
+                    const prevValue = prev[key];
                     
-                    if (!isEmpty) {
-                        (mergedPlan as any)[key] = value;
+                    // Only update if AI has a value AND the previous value was empty.
+                    if (!isValueEmpty(aiValue) && isValueEmpty(prevValue)) {
+                        (mergedPlan as any)[key] = aiValue;
                     }
                 });
-                
-                // The day is derived from the date, so if the AI provides a date, update both.
-                if (partialPlan.date) {
-                    mergedPlan.date = partialPlan.date;
-                    if (partialPlan.day) {
-                        mergedPlan.day = partialPlan.day;
-                    }
+
+                // Handle date and day sync specially. If date was filled, also fill the day.
+                if (mergedPlan.date !== prev.date && partialPlan.day) {
+                    mergedPlan.day = partialPlan.day;
                 }
 
                 return mergedPlan;

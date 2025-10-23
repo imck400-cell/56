@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import type { LessonPlan } from '../types';
+import type { LessonPlan, Objective } from '../types';
 
 const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
@@ -75,10 +75,13 @@ export async function analyzeLessonPlanWithGemini(lessonText: string): Promise<P
         const jsonString = response.text.trim();
         const parsedResult = JSON.parse(jsonString) as Partial<LessonPlan>;
         
-        // Ensure objectives arrays are not undefined and have unique IDs
-        parsedResult.cognitiveObjectives = (parsedResult.cognitiveObjectives || []).map((o: any, i: number) => ({...o, id: `cog-${Date.now()}-${i}`}));
-        parsedResult.psychomotorObjectives = (parsedResult.psychomotorObjectives || []).map((o: any, i: number) => ({...o, id: `psy-${Date.now()}-${i}`}));
-        parsedResult.affectiveObjectives = (parsedResult.affectiveObjectives || []).map((o: any, i: number) => ({...o, id: `aff-${Date.now()}-${i}`}));
+        // The type of objectives coming from the AI response will not have an 'id' yet.
+        type ObjectiveBase = Omit<Objective, 'id'>;
+
+        // Ensure objectives arrays are not undefined, are correctly typed, and have unique IDs added.
+        parsedResult.cognitiveObjectives = ((parsedResult.cognitiveObjectives as ObjectiveBase[]) || []).map((o, i) => ({ ...o, id: `cog-${Date.now()}-${i}` }));
+        parsedResult.psychomotorObjectives = ((parsedResult.psychomotorObjectives as ObjectiveBase[]) || []).map((o, i) => ({ ...o, id: `psy-${Date.now()}-${i}` }));
+        parsedResult.affectiveObjectives = ((parsedResult.affectiveObjectives as ObjectiveBase[]) || []).map((o, i) => ({ ...o, id: `aff-${Date.now()}-${i}` }));
         
         // Auto-update day based on date if Gemini provides a date
         if (parsedResult.date) {

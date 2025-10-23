@@ -16,5 +16,5 @@ declare global {
   }
 }
 
-// Export an empty object to make this file a module and ensure it's processed correctly.
+// FIX: Add an empty export to ensure this file is treated as a module, allowing global augmentations.
 export {};
