@@ -1,4 +1,4 @@
 {
-  "buildCommand": "mkdir public && rsync -a --exclude 'public' . public/",
+  "buildCommand": "mkdir public && find . -maxdepth 1 -not -name 'public' -not -name '.' -exec cp -r '{}' public/ \\;",
   "outputDirectory": "public"
 }
