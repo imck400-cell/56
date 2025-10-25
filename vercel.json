@@ -1,4 +1,4 @@
 {
-  "installCommand": "echo 'Skipping install'",
-  "buildCommand": "echo 'Skipping build'"
+  "buildCommand": "mkdir public && rsync -a --exclude 'public' . public/",
+  "outputDirectory": "public"
 }
