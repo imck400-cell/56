@@ -17,6 +17,7 @@ export interface LessonPlan {
   day: string;
   date: string;
   subject: string;
+  subjectBranch: string;
   lessonTitle: string;
   grade: string;
   section: string;
@@ -30,8 +31,8 @@ export interface LessonPlan {
   cognitiveObjectives: Objective[];
   psychomotorObjectives: Objective[];
   affectiveObjectives: Objective[];
-  teacherRole: string;
-  studentRole: string;
+  teacherRole: string[];
+  studentRole: string[];
   lessonContent: string;
   lessonClosure: string;
   closureType: string;

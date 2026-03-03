@@ -1,8 +1,14 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { analyzeLessonPlanWithGemini } from '../services/geminiService';
+import { analyzeLessonPlanWithGemini, generateFullLessonPlanWithGemini } from '../services/geminiService';
 import type { LessonPlan, Objective } from '../types';
 import { BloomLevelCognitive, BloomLevelAffective, BloomLevelPsychomotor } from '../types';
-import { SUBJECTS, GRADES, SECTIONS, PERIODS, DAYS, INTRO_TYPES, TEACHING_METHODS, TEACHING_AIDS } from '../constants';
+import { SUBJECTS, GRADES, SECTIONS, PERIODS, DAYS, INTRO_TYPES, TEACHING_METHODS, TEACHING_AIDS, SUBJECT_BRANCHES } from '../constants';
+import GenerationModal from './GenerationModal';
+import GeneratedPlan from './GeneratedPlan';
+import { readFileAsText } from '../utils/fileUtils';
+import type { GenerationFormState } from './GenerationModal';
+
 
 interface LessonPlannerProps {
     onBackToWelcome: () => void;
@@ -20,6 +26,7 @@ const initialLessonPlan: LessonPlan = {
   day: '',
   date: new Date().toLocaleDateString('en-CA'), // YYYY-MM-DD format
   subject: '',
+  subjectBranch: '',
   lessonTitle: '',
   grade: '',
   section: '',
@@ -33,8 +40,8 @@ const initialLessonPlan: LessonPlan = {
   cognitiveObjectives: [],
   psychomotorObjectives: [],
   affectiveObjectives: [],
-  teacherRole: 'موجه ومرشد',
-  studentRole: 'مشارك ومتفاعل',
+  teacherRole: ['موجه ومرشد'],
+  studentRole: ['مشارك ومتفاعل'],
   lessonContent: '',
   lessonClosure: '',
   closureType: '',
@@ -80,30 +87,49 @@ const ImageUploader: React.FC<{
 
 const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }) => {
     const [lessonPlan, setLessonPlan] = useState<LessonPlan>(initialLessonPlan);
-    const [inputText, setInputText] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [analysisInputText, setAnalysisInputText] = useState('');
+    const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+    const [analysisError, setAnalysisError] = useState<string | null>(null);
     const [isPrinting, setIsPrinting] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    
+    // State for the new generation feature
+    const [generationInputText, setGenerationInputText] = useState('');
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [generationError, setGenerationError] = useState<string | null>(null);
+    const [generatedPlan, setGeneratedPlan] = useState<{ structuredData: Partial<LessonPlan>; plainText: string; } | null>(null);
+    const [teacherProfile, setTeacherProfile] = useState({});
     
     const titleStyle = { textShadow: '1px 1px 1px rgba(0,0,0,0.1)' };
     const mainTitleStyle = { textShadow: '2px 2px 3px rgba(0,0,0,0.2)', fontFamily: "'Changa', sans-serif", fontWeight: 700 };
 
 
     useEffect(() => {
-        if (lesson) {
-            setLessonPlan(lesson);
-        } else {
-            try {
-                const profileJson = localStorage.getItem('teacherProfile');
-                const profile = profileJson ? JSON.parse(profileJson) : {};
+        // Load teacher profile for both new plans and generation modal
+        try {
+            const profileJson = localStorage.getItem('teacherProfile');
+            const profile = profileJson ? JSON.parse(profileJson) : {};
+            setTeacherProfile(profile);
+
+            if (lesson) {
+                // Ensure roles are arrays for loaded lessons
+                const loadedLesson = {
+                    ...lesson,
+                    teacherRole: Array.isArray(lesson.teacherRole) ? lesson.teacherRole : [lesson.teacherRole],
+                    studentRole: Array.isArray(lesson.studentRole) ? lesson.studentRole : [lesson.studentRole],
+                };
+                setLessonPlan(loadedLesson);
+            } else {
                 setLessonPlan({
                     ...initialLessonPlan,
                     ...profile,
                     id: `plan-${Date.now()}`,
                 });
-            } catch (error) {
-                console.error("Failed to load teacher profile:", error);
+            }
+        } catch (error) {
+            console.error("Failed to load data:", error);
+            if (!lesson) {
                 setLessonPlan({ ...initialLessonPlan, id: `plan-${Date.now()}` });
             }
         }
@@ -123,8 +149,8 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
             localStorage.setItem('savedLessonPlans', JSON.stringify(plans));
 
             // Also update the teacher profile with the latest info
-            const { educationArea, schoolName, emblem1, emblem2, teacherName } = lessonPlan;
-            const profile = { educationArea, schoolName, emblem1, emblem2, teacherName };
+            const { educationArea, schoolName, emblem1, emblem2, teacherName, subject, grade } = lessonPlan;
+            const profile = { educationArea, schoolName, emblem1, emblem2, teacherName, subject, grade };
             localStorage.setItem('teacherProfile', JSON.stringify(profile));
             
             alert('تم حفظ الخطة بنجاح!');
@@ -147,7 +173,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
             }
             
             if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
-                setError("خطأ: مكتبات تصدير PDF لم يتم تحميلها.");
+                setAnalysisError("خطأ: مكتبات تصدير PDF لم يتم تحميلها.");
                 setIsPrinting(false);
                 setIsExporting(false);
                 return;
@@ -184,7 +210,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                 pdf.save(`${lessonPlan.lessonTitle || 'خطة-درس'}.pdf`);
     
             } catch (err) {
-                setError("حدث خطأ أثناء إنشاء ملف PDF.");
+                setAnalysisError("حدث خطأ أثناء إنشاء ملف PDF.");
             } finally {
                 setIsPrinting(false);
                 setIsExporting(false);
@@ -193,14 +219,14 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
     };
 
     const handleAnalyze = async () => {
-        if (!inputText.trim()) {
-            setError("الرجاء إدخال نص خطة الدرس للتحليل.");
+        if (!analysisInputText.trim()) {
+            setAnalysisError("الرجاء إدخال نص خطة الدرس للتحليل.");
             return;
         }
-        setIsLoading(true);
-        setError(null);
+        setIsLoadingAnalysis(true);
+        setAnalysisError(null);
         try {
-            const partialPlan = await analyzeLessonPlanWithGemini(inputText);
+            const partialPlan = await analyzeLessonPlanWithGemini(analysisInputText);
             setLessonPlan(prev => {
                 const mergedPlan = { ...prev };
 
@@ -211,19 +237,16 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                     (Array.isArray(value) && value.length === 0);
 
                 (Object.keys(partialPlan) as Array<keyof Partial<LessonPlan>>).forEach(key => {
-                    // Skip 'day' as it is derived from 'date' and handled separately
                     if (key === 'day') return;
 
                     const aiValue = partialPlan[key];
                     const prevValue = prev[key];
                     
-                    // Only update if AI has a value AND the previous value was empty.
                     if (!isValueEmpty(aiValue) && isValueEmpty(prevValue)) {
                         (mergedPlan as any)[key] = aiValue;
                     }
                 });
 
-                // Handle date and day sync specially. If date was filled, also fill the day.
                 if (mergedPlan.date !== prev.date && partialPlan.day) {
                     mergedPlan.day = partialPlan.day;
                 }
@@ -233,12 +256,12 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
 
         } catch (err) {
             if (err instanceof Error) {
-                setError(err.message);
+                setAnalysisError(err.message);
             } else {
-                setError("فشل تحليل خطة الدرس. الرجاء المحاولة مرة أخرى.");
+                setAnalysisError("فشل تحليل خطة الدرس. الرجاء المحاولة مرة أخرى.");
             }
         } finally {
-            setIsLoading(false);
+            setIsLoadingAnalysis(false);
         }
     };
     
@@ -246,15 +269,15 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
         const { name, value } = e.target;
         if (name === 'date') {
             try {
-                // Create a date object ensuring it's interpreted as local time to avoid timezone shifts
                 const dateObj = new Date(value + 'T00:00:00'); 
-                const dayIndex = dateObj.getUTCDay(); // 0 for Sunday, 1 for Monday...
+                const dayIndex = dateObj.getUTCDay();
                 const dayName = DAYS[dayIndex];
                 setLessonPlan(prev => ({ ...prev, date: value, day: dayName }));
             } catch (error) {
-                 // Fallback for invalid dates
                 setLessonPlan(prev => ({ ...prev, date: value }));
             }
+        } else if (name === 'teacherRole' || name === 'studentRole') {
+            setLessonPlan(prev => ({ ...prev, [name]: value.split('\n') }));
         } else {
             setLessonPlan(prev => ({ ...prev, [name]: value }));
         }
@@ -290,6 +313,66 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
         setLessonPlan(prev => ({ ...prev, [key]: prev[key].filter(obj => obj.id !== id) }));
     };
 
+    // New Generation Feature Handlers
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setGenerationError(null);
+            try {
+                const text = await readFileAsText(file);
+                setGenerationInputText(text);
+            } catch (error: any) {
+                setGenerationError(error.message || 'حدث خطأ أثناء قراءة الملف.');
+            }
+        }
+    };
+    
+    const handleGenerateSubmit = async (formData: GenerationFormState) => {
+        if (!generationInputText.trim()) {
+            setGenerationError("الرجاء إدخال موضوع الدرس أو لصق محتواه.");
+            setIsModalOpen(false);
+            return;
+        }
+        setIsModalOpen(false);
+        setIsGenerating(true);
+        setGenerationError(null);
+        setGeneratedPlan(null);
+        try {
+            const result = await generateFullLessonPlanWithGemini(generationInputText, formData);
+            setGeneratedPlan(result);
+        } catch (err) {
+            if (err instanceof Error) {
+                setGenerationError(err.message);
+            } else {
+                setGenerationError("فشل إنشاء خطة الدرس. الرجاء المحاولة مرة أخرى.");
+            }
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleFillForm = () => {
+        if (generatedPlan?.structuredData) {
+            const newPlanId = `plan-${Date.now()}`;
+            const profileJson = localStorage.getItem('teacherProfile');
+            const profile = profileJson ? JSON.parse(profileJson) : {};
+            
+            setLessonPlan({
+                ...initialLessonPlan,
+                ...profile,
+                ...generatedPlan.structuredData,
+                id: newPlanId,
+            });
+            
+            setTimeout(() => {
+                document.getElementById('printable-area')?.scrollIntoView({ behavior: 'smooth' });
+            }, 100);
+
+            alert('تم تعبئة الحقول بنجاح!');
+        }
+    };
+
+
     const renderObjectiveRows = (type: 'cognitive' | 'psychomotor' | 'affective', objectives: Objective[], levelEnum: any) => (
         <div className="space-y-1">
             {objectives.map((obj, index) => (
@@ -310,7 +393,6 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
         </div>
     );
     
-    const renderStaticTextarea = (value: string | undefined, small: boolean = false) => <div className={`w-full p-1.5 border rounded-md bg-slate-50 whitespace-pre-wrap font-bold ${small ? 'text-xs' : 'text-sm'}`}>{value || ''}</div>
 
     return (
         <div className="p-2 sm:p-4 md:p-6 bg-slate-50 min-h-screen" dir="rtl">
@@ -320,18 +402,61 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                     <button onClick={onBackToWelcome} className="bg-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">العودة للرئيسية</button>
                 </div>
             )}
+            
             {!isPrinting && (
-                <section className="max-w-7xl mx-auto mb-4 p-4 bg-sky-50 border border-sky-200 rounded-lg">
-                    <h2 className="text-xl font-semibold text-sky-800 mb-2">التحليل باستخدام الذكاء الاصطناعي</h2>
-                    <p className="text-sm text-slate-600 mb-2">
-                        الصق محتوى الدرس في المربع أدناه، وسيقوم الذكاء الاصطناعي باستخلاص المعلومات وتعبئة الحقول تلقائيًا.
-                    </p>
-                    <textarea className="w-full h-24 p-2 border border-slate-300 rounded-md font-bold" placeholder="مثال: عنوان الدرس: الفاعل. المادة: لغة عربية. الصف: الخامس..." value={inputText} onChange={(e) => setInputText(e.target.value)} />
-                    <div className="mt-2 flex items-center gap-4">
-                        <button onClick={handleAnalyze} disabled={isLoading} className="bg-sky-600 text-white font-bold py-2 px-5 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition-all flex items-center">{isLoading ? 'جاري التحليل...' : 'تحليل النص'}</button>
-                        {error && <p className="text-red-600 font-semibold">{error}</p>}
-                    </div>
-                </section>
+                 <>
+                    <section className="max-w-7xl mx-auto mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-lg shadow-sm">
+                        <h2 className="text-xl font-semibold text-emerald-800 mb-2">1. إنشاء تحضير إلكتروني كامل (مُستحسن)</h2>
+                        <p className="text-sm text-slate-600 mb-2">
+                            اكتب موضوع الدرس (مثال: الفاعل في اللغة العربية) أو الصق محتوى الدرس هنا. ثم اضغط على زر الإنشاء.
+                        </p>
+                        <textarea 
+                            className="w-full h-28 p-2 border border-slate-300 rounded-md font-bold focus:ring-2 focus:ring-emerald-500" 
+                            placeholder="اكتب موضوع الدرس هنا..." 
+                            value={generationInputText} 
+                            onChange={(e) => setGenerationInputText(e.target.value)} 
+                        />
+                        <div className="mt-2 flex items-center gap-4">
+                            <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 text-white font-bold py-2 px-5 rounded-lg hover:bg-emerald-700 transition-all flex items-center">
+                                أنشئ التحضير إلكترونياً
+                            </button>
+                            <label className="text-sm text-slate-700 cursor-pointer hover:underline">
+                                أو أدرج ملف (txt, pdf, docx, xlsx)
+                                <input type="file" className="hidden" accept=".txt,.pdf,.docx,.xlsx" onChange={handleFileChange} />
+                            </label>
+                        </div>
+                    </section>
+
+                    {isGenerating && <div className="max-w-7xl mx-auto my-4 text-center p-4 bg-white rounded-lg shadow"><p className="font-semibold text-indigo-600">جاري إنشاء التحضير، قد يستغرق هذا بضع لحظات...</p></div>}
+                    {generationError && <div className="max-w-7xl mx-auto my-4 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700 font-semibold">{generationError}</div>}
+                    {generatedPlan && (
+                        <GeneratedPlan 
+                            generatedText={generatedPlan.plainText}
+                            onFillForm={handleFillForm}
+                        />
+                    )}
+
+                    <GenerationModal 
+                        isOpen={isModalOpen}
+                        onClose={() => setIsModalOpen(false)}
+                        onSubmit={handleGenerateSubmit}
+                        teacherProfile={teacherProfile}
+                    />
+
+                    <div className="max-w-7xl mx-auto my-6 border-t-2 border-dashed border-slate-300"></div>
+
+                    <section className="max-w-7xl mx-auto mb-4 p-4 bg-sky-50 border border-sky-200 rounded-lg shadow-sm">
+                        <h2 className="text-xl font-semibold text-sky-800 mb-2">2. استخلاص المعلومات من تحضير جاهز</h2>
+                        <p className="text-sm text-slate-600 mb-2">
+                            لديك تحضير مكتوب بالفعل؟ الصقه هنا لاستخلاص المعلومات وتعبئة الحقول بالأسفل تلقائيًا.
+                        </p>
+                        <textarea className="w-full h-24 p-2 border border-slate-300 rounded-md font-bold focus:ring-2 focus:ring-sky-500" placeholder="مثال: عنوان الدرس: الفاعل. المادة: لغة عربية. الصف: الخامس..." value={analysisInputText} onChange={(e) => setAnalysisInputText(e.target.value)} />
+                        <div className="mt-2 flex items-center gap-4">
+                            <button onClick={handleAnalyze} disabled={isLoadingAnalysis} className="bg-sky-600 text-white font-bold py-2 px-5 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition-all flex items-center">{isLoadingAnalysis ? 'جاري التحليل...' : 'تحليل النص'}</button>
+                            {analysisError && <p className="text-red-600 font-semibold">{analysisError}</p>}
+                        </div>
+                    </section>
+                </>
             )}
 
             <div id="printable-area" className={`max-w-7xl mx-auto bg-white rounded-lg shadow-lg ${isPrinting ? 'p-2 text-black' : 'p-4'}`}>
@@ -359,14 +484,15 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                 <h2 className="text-3xl font-bold text-center my-2 text-blue-900" style={mainTitleStyle}>خطة الدرس اليومي</h2>
 
                 <section className="p-2 border rounded-lg mb-2">
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-2 gap-y-1 text-xs items-center">
-                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>المادة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.subject}</p> : <select name="subject" value={lessonPlan.subject} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold"><option value="">اختر</option>{SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
-                        <div className="flex items-baseline gap-1 col-span-2 md:col-span-1"><label className="font-bold text-red-800" style={titleStyle}>عنوان الدرس:</label>{isPrinting ? <p className="font-bold">{lessonPlan.lessonTitle}</p> : <input name="lessonTitle" value={lessonPlan.lessonTitle} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold" />}</div>
-                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الصف:</label>{isPrinting ? <p className="font-bold">{lessonPlan.grade}</p> : <select name="grade" value={lessonPlan.grade} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold"><option value="">اختر</option>{GRADES.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
-                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الشعبة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.section}</p> : <select name="section" value={lessonPlan.section} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold"><option value="">اختر</option>{SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
-                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>اليوم:</label>{isPrinting ? <p className="font-bold">{lessonPlan.day}</p> : <select name="day" value={lessonPlan.day} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold"><option value="">اختر</option>{DAYS.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-x-2 gap-y-1 text-xs items-center">
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>المادة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.subject}</p> : <><input name="subject" value={lessonPlan.subject} onChange={handleChange} list="subjects-list" className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id="subjects-list">{SUBJECTS.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>فرع المادة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.subjectBranch}</p> : <><input name="subjectBranch" value={lessonPlan.subjectBranch} onChange={handleChange} list={`branches-${lessonPlan.subject}`} className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id={`branches-${lessonPlan.subject}`}>{ (SUBJECT_BRANCHES[lessonPlan.subject] || []).map(s => <option key={s} value={s} />)}</datalist></>}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>عنوان الدرس:</label>{isPrinting ? <p className="font-bold">{lessonPlan.lessonTitle}</p> : <input name="lessonTitle" value={lessonPlan.lessonTitle} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold" />}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الصف:</label>{isPrinting ? <p className="font-bold">{lessonPlan.grade}</p> : <><input name="grade" value={lessonPlan.grade} onChange={handleChange} list="grades-list" className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id="grades-list">{GRADES.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الشعبة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.section}</p> : <><input name="section" value={lessonPlan.section} onChange={handleChange} list="sections-list" className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id="sections-list">{SECTIONS.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>اليوم:</label>{isPrinting ? <p className="font-bold">{lessonPlan.day}</p> : <><input name="day" value={lessonPlan.day} onChange={handleChange} list="days-list" className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id="days-list">{DAYS.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
                         <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>التاريخ:</label>{isPrinting ? <p className="font-bold">{lessonPlan.date}</p> : <input type="date" name="date" value={lessonPlan.date} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold" />}</div>
-                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الحصة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.period}</p> : <select name="period" value={lessonPlan.period} onChange={handleChange} className="p-1 border rounded-md w-full text-xs font-bold"><option value="">اختر</option>{PERIODS.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
+                        <div className="flex items-baseline gap-1"><label className="font-bold text-red-800" style={titleStyle}>الحصة:</label>{isPrinting ? <p className="font-bold">{lessonPlan.period}</p> : <><input name="period" value={lessonPlan.period} onChange={handleChange} list="periods-list" className="p-1 border rounded-md w-full text-xs font-bold" /><datalist id="periods-list">{PERIODS.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
                     </div>
                 </section>
                 
@@ -382,7 +508,23 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                         <h3 className="text-base font-bold text-red-800 border-b pb-1" style={titleStyle}>الوسائل والاستراتيجيات</h3>
                         <div>
                             <h4 className="font-bold text-red-800 mb-1 text-sm" style={titleStyle}>طرق التدريس</h4>
-                            {isPrinting ? <div className="p-1 bg-slate-50 rounded-md text-xs font-bold">{lessonPlan.teachingMethods.join('، ')}</div> : <div className="grid grid-cols-2 md:grid-cols-4 gap-1">{TEACHING_METHODS.map(m => (<label key={m} className="flex items-center space-x-1 space-x-reverse"><input type="checkbox" checked={lessonPlan.teachingMethods.includes(m)} onChange={() => handleCheckboxChange('teachingMethods', m)} className="rounded" /><span className="text-xs">{m}</span></label>))}</div>}
+                            {isPrinting ? <div className="p-1 bg-slate-50 rounded-md text-xs font-bold">{lessonPlan.teachingMethods.join('، ')}</div> : (
+                                <div className="space-y-2">
+                                    {Object.entries(TEACHING_METHODS).map(([category, methods]) => (
+                                        <div key={category}>
+                                            <p className="font-medium text-slate-600 text-xs mb-1">{category}</p>
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-1">
+                                                {(methods as string[]).map(method => (
+                                                    <label key={method} className="flex items-center space-x-1 space-x-reverse">
+                                                        <input type="checkbox" checked={lessonPlan.teachingMethods.includes(method)} onChange={() => handleCheckboxChange('teachingMethods', method)} className="rounded" />
+                                                        <span className="text-xs">{method}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                         <div>
                             <h4 className="font-bold text-red-800 mb-1 text-sm" style={titleStyle}>الوسائل التعليمية</h4>
@@ -393,20 +535,44 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ onBackToWelcome, lesson }
                     <section className="p-2 border rounded-lg space-y-2">
                         <h3 className="text-base font-bold text-red-800 border-b pb-1" style={titleStyle}>سير الدرس</h3>
                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <div className="md:col-span-2"><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>التمهيد</label>{isPrinting ? renderStaticTextarea(lessonPlan.lessonIntro, true) : <textarea name="lessonIntro" value={lessonPlan.lessonIntro} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
-                            <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>نوع التمهيد</label>{isPrinting ? <div className="p-1.5 border rounded-md bg-slate-50 flex items-center text-xs font-bold">{lessonPlan.introType}</div> : <select name="introType" value={lessonPlan.introType} onChange={handleChange} className="w-full p-2 border rounded-md text-sm font-bold"><option value="">اختر</option>{INTRO_TYPES.map(s => <option key={s} value={s}>{s}</option>)}</select>}</div>
+                            <div className="md:col-span-2"><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>التمهيد</label>{isPrinting ? <div className="w-full p-1.5 border rounded-md bg-slate-50 whitespace-pre-wrap font-bold text-xs">{lessonPlan.lessonIntro || ''}</div> : <textarea name="lessonIntro" value={lessonPlan.lessonIntro} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
+                            <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>نوع التمهيد</label>{isPrinting ? <div className="p-1.5 border rounded-md bg-slate-50 flex items-center text-xs font-bold">{lessonPlan.introType}</div> : <><input name="introType" value={lessonPlan.introType} onChange={handleChange} list="intro-types-list" className="w-full p-2 border rounded-md text-sm font-bold" /><datalist id="intro-types-list">{INTRO_TYPES.map(s => <option key={s} value={s}/>)}</datalist></>}</div>
                         </div>
-                         <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>محتوى الدرس والأنشطة</label>{isPrinting ? renderStaticTextarea(lessonPlan.lessonContent, true) : <textarea name="lessonContent" value={lessonPlan.lessonContent} onChange={handleChange} rows={4} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
+                         <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>محتوى الدرس والأنشطة</label>{isPrinting ? <div className="w-full p-1.5 border rounded-md bg-slate-50 whitespace-pre-wrap font-bold text-xs">{lessonPlan.lessonContent || ''}</div> : <textarea name="lessonContent" value={lessonPlan.lessonContent} onChange={handleChange} rows={4} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>أدوار المعلم</label>{isPrinting ? renderStaticTextarea(lessonPlan.teacherRole, true) : <textarea name="teacherRole" value={lessonPlan.teacherRole} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
-                            <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>أدوار الطالب</label>{isPrinting ? renderStaticTextarea(lessonPlan.studentRole, true) : <textarea name="studentRole" value={lessonPlan.studentRole} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
+                            <div>
+                                <label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>أدوار المعلم</label>
+                                {isPrinting ? (
+                                    <ul className="list-disc list-inside bg-slate-50 p-2 rounded-md space-y-1 border text-xs font-bold">
+                                        {lessonPlan.teacherRole && lessonPlan.teacherRole.length > 0 ?
+                                            lessonPlan.teacherRole.map((role, index) => <li key={`tr-${index}`}>{role}</li>) :
+                                            <li className="text-slate-400">لا توجد أدوار محددة.</li>
+                                        }
+                                    </ul>
+                                ) : (
+                                    <textarea name="teacherRole" value={lessonPlan.teacherRole.join('\n')} onChange={handleChange} rows={4} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>
+                                )}
+                            </div>
+                            <div>
+                                <label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>أدوار الطالب</label>
+                                {isPrinting ? (
+                                     <ul className="list-disc list-inside bg-slate-50 p-2 rounded-md space-y-1 border text-xs font-bold">
+                                        {lessonPlan.studentRole && lessonPlan.studentRole.length > 0 ?
+                                            lessonPlan.studentRole.map((role, index) => <li key={`sr-${index}`}>{role}</li>) :
+                                            <li className="text-slate-400">لا توجد أدوار محددة.</li>
+                                        }
+                                    </ul>
+                                ) : (
+                                    <textarea name="studentRole" value={lessonPlan.studentRole.join('\n')} onChange={handleChange} rows={4} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>
+                                )}
+                            </div>
                         </div>
                     </section>
 
                     <section className="p-2 border rounded-lg space-y-2">
                         <h3 className="text-base font-bold text-red-800 border-b pb-1" style={titleStyle}>التقويم والخاتمة</h3>
-                        <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>الخاتمة</label>{isPrinting ? renderStaticTextarea(lessonPlan.lessonClosure, true) : <textarea name="lessonClosure" value={lessonPlan.lessonClosure} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
-                        <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>الواجب المنزلي</label>{isPrinting ? renderStaticTextarea(lessonPlan.homework, true) : <textarea name="homework" value={lessonPlan.homework} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
+                        <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>الخاتمة والتقويم</label>{isPrinting ? <div className="w-full p-1.5 border rounded-md bg-slate-50 whitespace-pre-wrap font-bold text-xs">{lessonPlan.lessonClosure || ''}</div> : <textarea name="lessonClosure" value={lessonPlan.lessonClosure} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
+                        <div><label className="font-bold text-red-800 mb-1 block text-sm" style={titleStyle}>الواجب المنزلي</label>{isPrinting ? <div className="w-full p-1.5 border rounded-md bg-slate-50 whitespace-pre-wrap font-bold text-xs">{lessonPlan.homework || ''}</div> : <textarea name="homework" value={lessonPlan.homework} onChange={handleChange} rows={2} className="w-full p-1 border rounded-md text-sm font-bold"></textarea>}</div>
                     </section>
 
                     <footer className="pt-2">

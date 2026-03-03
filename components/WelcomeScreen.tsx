@@ -42,19 +42,39 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNavigate }) => {
                     <p className="text-xl font-bold text-indigo-700">إبراهيم بن صالح بن حسن دُخَّان</p>
                     <p className="mt-2 text-md">للتواصل عبر رقم الهاتف: <span dir="ltr">780804012</span></p>
                 </div>
-                 <div className="mt-12">
+                
+                 <div className="mt-12 mb-8">
                      <button 
                         onClick={() => onNavigate('planner')}
-                        className="bg-indigo-600 text-white font-bold py-4 px-10 rounded-lg shadow-lg hover:bg-indigo-700 transform hover:-translate-y-1 transition-all duration-300 ease-in-out flex items-center justify-center space-x-2 space-x-reverse w-full md:w-auto md:mx-auto"
+                        className="bg-indigo-600 text-white font-bold py-4 px-10 rounded-lg shadow-lg hover:bg-indigo-700 transform hover:-translate-y-1 transition-all duration-300 ease-in-out flex items-center justify-center space-x-2 space-x-reverse w-full md:w-auto md:mx-auto text-xl"
                     >
                        <span>إنشاء درس جديد</span>
                     </button>
                 </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+                    <button onClick={() => onNavigate('chat')} className="flex flex-col items-center justify-center p-4 bg-white/60 rounded-xl hover:bg-white/90 hover:shadow-lg transition-all border border-indigo-100 group">
+                        <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🤖</span>
+                        <span className="font-bold text-indigo-800">المساعد الذكي</span>
+                    </button>
+                    <button onClick={() => onNavigate('transcriber')} className="flex flex-col items-center justify-center p-4 bg-white/60 rounded-xl hover:bg-white/90 hover:shadow-lg transition-all border border-indigo-100 group">
+                        <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🎙️</span>
+                        <span className="font-bold text-indigo-800">تحويل الصوت لنص</span>
+                    </button>
+                    <button onClick={() => onNavigate('tts')} className="flex flex-col items-center justify-center p-4 bg-white/60 rounded-xl hover:bg-white/90 hover:shadow-lg transition-all border border-indigo-100 group">
+                        <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🔊</span>
+                        <span className="font-bold text-indigo-800">تحويل النص لصوت</span>
+                    </button>
+                    <button onClick={() => onNavigate('image-gen')} className="flex flex-col items-center justify-center p-4 bg-white/60 rounded-xl hover:bg-white/90 hover:shadow-lg transition-all border border-indigo-100 group">
+                        <span className="text-4xl mb-2 group-hover:scale-110 transition-transform">🎨</span>
+                        <span className="font-bold text-indigo-800">توليد الصور</span>
+                    </button>
+                </div>
+
                 {savedPlans.length > 0 && (
-                    <div className="mt-10 text-right">
+                    <div className="mt-10 text-right border-t pt-8 border-indigo-100">
                         <h2 className="text-2xl font-bold text-slate-700 mb-4 text-center">الدروس المحفوظة</h2>
-                        <div className="space-y-3 max-h-60 overflow-y-auto pr-2 border-t pt-4">
+                        <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
                             {savedPlans.map(plan => (
                                 <div key={plan.id} onClick={() => onNavigate('planner', plan)} className="flex justify-between items-center bg-white/50 p-3 rounded-lg shadow hover:shadow-md hover:bg-white transition-all cursor-pointer">
                                     <div className="flex flex-col text-right">
